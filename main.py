@@ -8,6 +8,9 @@ import mysql.connector
 from PIL import Image, ImageTk
 from tkinter import messagebox
 from tkinter import filedialog
+import datetime
+import shutil
+import threading
 
 class CriminalFaceDetectorApp(tk.Tk):
     def __init__(self):
@@ -17,11 +20,18 @@ class CriminalFaceDetectorApp(tk.Tk):
         self.pages = {}
         self.showed_ids = []
         self.working_cameras = []
+        self.capture_threads = []
+        self.capture_events = []   # List to store capture events
+        self.capture_lock = threading.Lock()  # Lock for thread synchronization
 
-    def insert_new_crimnal(self, criminal_first_name, criminal_last_name, criminal_image, criminal_date_of_birth, criminal_notes):
-        criminal_id = None
-        criminal_create_date = None
-        self.cursor.execute(f"INSERT INTO criminals VALUES ({criminal_id},{criminal_first_name},{criminal_last_name},{criminal_image},{criminal_date_of_birth},{criminal_notes},{criminal_create_date})")
+        self.db = mysql.connector.connect(
+            host="localhost",
+            user="kali",
+            password="kali",
+            database="criminals"
+        )
+
+        self.cursor = self.db.cursor()
 
     def pop_match_dialog(self, criminal_id, criminal_first_name, criminal_last_name, criminal_image, criminal_date_of_birth, criminal_notes, criminal_create_date):
         self.showed_ids.append(criminal_id)
@@ -102,14 +112,14 @@ class CriminalFaceDetectorApp(tk.Tk):
         page.rowconfigure(1, weight=3)    
         page.rowconfigure(2, weight=1)
 
-        capture_button = tk.Button(page, text="Start/Stop Capture", command=lambda: self.start_capture(self.video_label, self.result_label))
+        capture_button = tk.Button(page, text="Start/Stop Capture", command=self.start_all_captures)
         capture_button.grid(row=0, column=1)  # Center horizontally
 
-        video_frame = tk.Frame(page)
-        video_frame.grid(row=1, column=1, sticky="nsew")  # Center horizontally and vertically
+        self.video_frame = tk.Frame(page)
+        self.video_frame.grid(row=1, column=1, sticky="nsew")  # Center horizontally and vertically
 
         # Create a label with a border around it
-        self.video_label = tk.Label(video_frame, text="Camera is not streaming", borderwidth=2, relief="solid")
+        self.video_label = tk.Label(self.video_frame, text="Camera is not streaming", borderwidth=2, relief="solid")
         self.video_label.pack(expand=True, fill="both")
 
         self.result_label = tk.Label(page, text="here the result")
@@ -146,6 +156,32 @@ class CriminalFaceDetectorApp(tk.Tk):
         criminal_notes_entry = tk.Entry(add_criminal_frame)
         criminal_notes_entry.grid(row=4, column=1, padx=10, pady=5)
 
+        # Create a frame to display existing criminals
+        existing_criminals_frame = tk.LabelFrame(page, text="Existing Criminals")
+        existing_criminals_frame.pack(padx=20, pady=20, fill="both", expand=True)
+
+        # Fetch criminal data from MySQL database
+        self.cursor.execute("SELECT * FROM criminals")
+        criminals = self.cursor.fetchall()
+
+        # Create labels for the table headers
+        headers = ["Criminal ID", "First Name", "Last Name", "Date of Birth", "Notes", "Image"]
+        for col, header in enumerate(headers):
+            header_label = tk.Label(existing_criminals_frame, text=header, padx=10, pady=5, relief=tk.RIDGE)
+            header_label.grid(row=0, column=col, sticky="nsew")
+
+        # Create a list to store the labels for criminal data
+        criminal_labels = []
+
+        for row, criminal in enumerate(criminals, start=1):
+            criminal_id, criminal_first_name, criminal_last_name, criminal_image, criminal_date_of_birth, criminal_notes, criminal_create_date = criminal
+            criminal_data = [criminal_id, criminal_first_name, criminal_last_name, criminal_date_of_birth, criminal_notes, criminal_image]
+            
+            for col, data in enumerate(criminal_data):
+                data_label = tk.Label(existing_criminals_frame, text=data, padx=10, pady=5, relief=tk.RIDGE)
+                data_label.grid(row=row, column=col, sticky="nsew")
+                criminal_labels.append(data_label)
+
         # Function to handle image upload
         def upload_image():
             file_path = filedialog.askopenfilename()
@@ -169,24 +205,24 @@ class CriminalFaceDetectorApp(tk.Tk):
 
         # Function to save the criminal information
         def save_criminal():
-            criminal_info = {
-                "Criminal ID": criminal_id_entry.get(),
-                "First Name": criminal_first_name_entry.get(),
-                "Last Name": criminal_last_name_entry.get(),
-                "Date of Birth": criminal_dob_entry.get(),
-                "Notes": criminal_notes_entry.get(),
-                "Creation Date": tk.StringVar(value="Date when the criminal is created"),
-                "Image Path": self.image_path if hasattr(self, "image_path") else ""
-            }
-
-            # Create a folder named "criminals" if it doesn't exist
-            if not os.path.exists("criminals"):
-                os.makedirs("criminals")
-
-            # Save the criminal information to a text file (replace 'criminal.txt' with your desired file name)
-            with open("criminal.txt", "w") as file:
-                for key, value in criminal_info.items():
-                    file.write(f"{key}: {value}\n")
+            if self.image_path and os.path.exists(self.image_path):
+                image_filename = os.path.basename(self.image_path)
+                destination_path = os.path.join("criminals", image_filename)
+                shutil.copyfile(self.image_path, destination_path)
+            
+            # Retrieve values from input fields
+            query = "INSERT INTO criminals (criminal_id, criminal_first_name, criminal_last_name, criminal_image, criminal_date_of_birth, criminal_notes, criminal_create_date) VALUES (%s, %s, %s, %s, %s, %s, %s)"
+            data = (
+                criminal_id_entry.get(),
+                criminal_first_name_entry.get(),
+                criminal_last_name_entry.get(),
+                destination_path if hasattr(self, "image_path") else "",
+                criminal_dob_entry.get(),
+                criminal_notes_entry.get(),
+                datetime.date.today()
+            )
+            self.cursor.execute(query, data)
+            self.db.commit()
 
             # Optionally, reset the entry fields after saving
             criminal_id_entry.delete(0, tk.END)
@@ -196,45 +232,48 @@ class CriminalFaceDetectorApp(tk.Tk):
             criminal_notes_entry.delete(0, tk.END)
             image_label.config(image=None)
 
-            # Create a button to save the criminal information
-            save_button = tk.Button(add_criminal_frame, text="Save Criminal", command=save_criminal)
-            save_button.grid(row=7, columnspan=2, pady=10)
+        # Create a button to save the criminal information
+        save_button = tk.Button(add_criminal_frame, text="Save Criminal", command=save_criminal)
+        save_button.grid(row=7, columnspan=2, pady=10)
 
-            # Refresh the list of existing criminals
-            self.display_existing_criminals()
+    def start_capture(self, camera_index, stop_event):
+        self.video_capture = cv2.VideoCapture(camera_index)
+        while not stop_event.is_set():
+            self.capture_video(self.video_label, self.result_label)
 
-    # def display_existing_criminals(self):
-    #     # Create a frame to display existing criminals
-    #     existing_criminals_frame = tk.LabelFrame(self.window, tsudo apt-get install qttools5-dev-toolsext="Existing Criminals")
-    #     existing_criminals_frame.pack(padx=20, pady=20)
+            # Process the frame as needed (e.g., display, save, etc.)
 
-    #     # List all image files in the "criminals" folder
-    #     criminal_images = [file for file in os.listdir("criminals") if file.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp"))]
+    def start_all_captures(self):
+        if not self.capture_active:  # Check if capture is not already active
+            if len(self.working_cameras) > 0:
+                self.capture_active = True
+                for camera_index, _ in enumerate(self.working_cameras):
+                    stop_event = threading.Event()
+                    capture_thread = threading.Thread(target=self.start_capture, args=(camera_index, stop_event))
+                    self.capture_threads.append(capture_thread)
+                    self.capture_events.append(stop_event)
+                    capture_thread.start()
+            else:
+                messagebox.showerror("Error", "No Active Cameras Found")
+        else:  # If capture is active, stop it
+            self.stop_all_captures()
 
-    #     for criminal_image in criminal_images:
-    #         image_path = os.path.join("criminals", criminal_image)
-    #         image = Image.open(image_path)
-    #         image.thumbnail((100, 100))
-    #         photo = ImageTk.PhotoImage(image)
-
-    #         # Display the image
-    #         tk.Label(existing_criminals_frame, image=photo).pack()
-
-    
-    def start_capture(self, video_label, result_label):
-        if len(self.list_working_cameras()[1]) > 0:
-            self.capture_active = True
-            self.video_capture = cv2.VideoCapture(0)
-            self.capture_video(video_label, result_label)  # Pass the video_label as an argument`
-        else:
-            messagebox.showerror("Error", "No Active Cameras Found")
+    def stop_all_captures(self):
+        if self.capture_active:
+            self.capture_active = False
+            for stop_event in self.capture_events:
+                stop_event.set()
+            for capture_thread in self.capture_threads:
+                capture_thread.join(timeout=5)
+            self.capture_threads = []
+            self.capture_events = []
 
     def list_working_cameras(self):
         non_working_ports = []
         dev_port = 0
         working_ports = []
         available_ports = []
-        while len(non_working_ports) < 6: # if there are more than 5 non working ports stop the testing. 
+        while len(non_working_ports) < 6:
             camera = cv2.VideoCapture(dev_port)
             if not camera.isOpened():
                 non_working_ports.append(dev_port)
@@ -260,18 +299,11 @@ class CriminalFaceDetectorApp(tk.Tk):
         # Enumerate available cameras using cv2
         self.working_cameras = self.list_working_cameras()[1]  # Change the range as needed
         camera_combobox = Combobox(page, values=self.working_cameras)
-        camera_combobox.set(self.working_cameras[0])  # Set the default camera
+        camera_combobox.set(self.working_cameras)  # Set the default camera
         camera_combobox.pack()
     
     def capture_video(self, video_label, result_label):
         try:
-            db = mysql.connector.connect(
-                host="localhost",
-                user="root",
-                password="root",
-                database="Criminals"
-            )
-
             if self.capture_active:
                 while True:
                     ret, frame = self.video_capture.read()
@@ -288,7 +320,7 @@ class CriminalFaceDetectorApp(tk.Tk):
                     # Encode the webcam face
                     webcam_face_encoding = face_recognition.face_encodings(frame)[0]
 
-                    self.cursor = db.cursor()
+                    self.cursor = self.db.cursor()
                     self.cursor.execute("SELECT * FROM criminals")
                     face_data = self.cursor.fetchall()
 
@@ -318,7 +350,7 @@ class CriminalFaceDetectorApp(tk.Tk):
     def run(self):
         try:
             self.window = tk.Tk()
-            self.window.geometry("800x800")
+            self.window.geometry("900x900")
             self.window.title("Criminals Face Detector")
 
             self.create_navbar(self.window)
