@@ -8,15 +8,20 @@ import mysql.connector
 import datetime
 import shutil
 import threading
+import pickle
+import numpy as np
+import time
 
 from PIL import Image, ImageTk
+from queue import Queue
 
 class CriminalFaceDetectorApp(tk.Tk):
     def __init__(self):
         self.capture_active = False
-        self.video_capture = None
+        self.video_capture = {}
         self.current_page = None
         self.video_label = None
+        self.currentCamera = 0
         self.pages = {}
         self.showed_ids = []
         self.working_cameras = []
@@ -303,7 +308,7 @@ class CriminalFaceDetectorApp(tk.Tk):
 
                     if len(criminals) > 0:
                         for row, criminal in enumerate(criminals, start=1):
-                            criminal_id, criminal_first_name, criminal_last_name, criminal_image, criminal_date_of_birth, criminal_notes, criminal_create_date = criminal
+                            criminal_id, criminal_first_name, criminal_last_name, criminal_image, criminal_date_of_birth, criminal_notes, criminal_create_date, criminal_face_encode = criminal
                             criminal_data = [criminal_id, criminal_first_name, criminal_last_name, criminal_date_of_birth, criminal_notes, criminal_image, criminal_create_date]
 
                             for col, data in enumerate(criminal_data):
@@ -373,8 +378,12 @@ class CriminalFaceDetectorApp(tk.Tk):
                             image_filename = os.path.basename(self.image_path)
                             destination_path = os.path.join("criminals", image_filename)
                             shutil.copyfile(self.image_path, destination_path)
+
+                        load_stored_image = face_recognition.load_image_file(self.image_path)
+                        stored_face_encoding = np.array(face_recognition.face_encodings(load_stored_image)[0])
+                        serialized_encoding = pickle.dumps(stored_face_encoding)
                         
-                        query = "INSERT INTO criminals (criminal_id, criminal_first_name, criminal_last_name, criminal_image, criminal_date_of_birth, criminal_notes, criminal_create_date) VALUES (%s, %s, %s, %s, %s, %s, %s)"
+                        query = "INSERT INTO criminals (criminal_id, criminal_first_name, criminal_last_name, criminal_image, criminal_date_of_birth, criminal_notes, criminal_create_date, criminal_face_encode) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
                         data = (
                             criminal_id_entry.get(),
                             criminal_first_name_entry.get(),
@@ -382,7 +391,8 @@ class CriminalFaceDetectorApp(tk.Tk):
                             destination_path if hasattr(self, "image_path") else "",
                             criminal_dob_entry.get(),
                             criminal_notes_entry.get(),
-                            datetime.date.today()
+                            datetime.date.today(),
+                            serialized_encoding
                         )
                         self.cursor.execute(query, data)
                         self.db.commit()
@@ -418,41 +428,12 @@ class CriminalFaceDetectorApp(tk.Tk):
             print(exc_type, fname, exc_tb.tb_lineno)
             print(exc_obj)
 
-    def start_capture(self, camera_index, stop_event):
-        self.video_capture = cv2.VideoCapture(camera_index)
-        while not stop_event.is_set():
-            self.capture_video()
-
-    def start_all_captures(self):
-        if not self.capture_active:
-            if len(self.working_cameras) > 0:
-                self.capture_active = True
-                for camera_index, _ in enumerate(self.working_cameras):
-                    stop_event = threading.Event()
-                    capture_thread = threading.Thread(target=self.start_capture, args=(camera_index, stop_event))
-                    self.capture_threads.append(capture_thread)
-                    self.capture_events.append(stop_event)
-                    capture_thread.start()
-            else:
-                tk.messagebox.showerror("Error", "No Active Cameras Found")
-        else:
-            self.stop_all_captures()
-
-    def stop_all_captures(self):
-        if self.capture_active:
-            self.capture_active = False
-            for stop_event in self.capture_events:
-                stop_event.set()
-            for capture_thread in self.capture_threads:
-                capture_thread.join(timeout=5)
-            self.capture_threads = []
-            self.capture_events = []
-
     def list_working_cameras(self):
         non_working_ports = []
         dev_port = 0
         working_ports = []
         available_ports = []
+
         while len(non_working_ports) < 6:
             camera = cv2.VideoCapture(dev_port)
             if not camera.isOpened():
@@ -469,7 +450,8 @@ class CriminalFaceDetectorApp(tk.Tk):
                     # print("Port %s for camera ( %s x %s) is present but does not reads." %(dev_port,h,w))
                     available_ports.append(dev_port)
             dev_port +=1
-        return available_ports,working_ports,non_working_ports
+
+        return available_ports, working_ports, non_working_ports
 
     def create_settings_page(self, page):
         try:
@@ -546,45 +528,109 @@ class CriminalFaceDetectorApp(tk.Tk):
             print(exc_type, fname, exc_tb.tb_lineno)
             print(exc_obj)    
 
-    def capture_video(self):
+    def start_capture(self, camera_index, stop_event):
+        cap = cv2.VideoCapture(camera_index)
+        self.video_capture[camera_index] = cap
+
+        while not stop_event.is_set():
+            self.capture_video(cap)
+
+    def start_all_captures(self):
+        if not self.capture_active:
+            if len(self.working_cameras) > 0:
+                self.capture_active = True
+
+                for camera_index in self.working_cameras:
+                    stop_event = threading.Event()
+                    capture_thread = threading.Thread(target=self.start_capture, args=(camera_index, stop_event))
+
+                    self.capture_threads.append(capture_thread)
+                    self.capture_events.append(stop_event)
+                    
+                    capture_thread.start()
+            else:
+                tk.messagebox.showerror("Error", "No Active Cameras Found")
+        else:
+            self.stop_all_captures()
+
+    def stop_all_captures(self):
+        if self.capture_active:
+            self.capture_active = False
+
+            for stop_event in self.capture_events:
+                stop_event.set()
+
+            for capture_thread in self.capture_threads:
+                capture_thread.join(timeout=5)
+
+            self.capture_threads = []
+            self.capture_events = []
+
+    def capture_video(self, cap):
             try:
                 if self.capture_active:
-                    # Create the video_label widget once outside of the loop
                     if self.video_label is None:
                         self.video_label = ctk.CTkLabel(self.video_frame, text=None)
                         self.video_label.pack(padx=5, pady=15)
-                    
-                    while True:
-                        ret, frame = self.video_capture.read()
 
-                        img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                        img = Image.fromarray(img_rgb)
-                        img_tk = ImageTk.PhotoImage(image=img)
+                    n_frames = 5
+                    self.frame_counter = 0
+                    frame_queue = Queue()
 
-                        self.video_label.configure(image=img_tk)
-                        self.video_label._image = img_tk
-                        self.video_label.update()
+                    def displayMatrix(face_encodings): 
+                        webcam_face_encoding = np.array(face_encodings)
 
-                        webcam_face_encoding = face_recognition.face_encodings(frame)[0]
-
-                        if len(webcam_face_encoding) > 0:
-                            matrix = webcam_face_encoding.reshape(16,8)
-                            for i in range(len(matrix)):
-                                for j in range(len(matrix[i])):
-                                    label = ctk.CTkLabel(self.matrix_frame, text=str(matrix[i][j]), bg_color="transparent", font=ctk.CTkFont(size=10), width=10, height=3, wraplength=100, anchor="center")
+                        for i in range(16):
+                            for j in range(8):
+                                index = i * 8 + j
+                                if index < len(webcam_face_encoding):
+                                    label = ctk.CTkLabel(self.matrix_frame, text=str(webcam_face_encoding[index]), bg_color="transparent", font=ctk.CTkFont(size=10), width=10, height=3, wraplength=100, anchor="center")
                                     label.grid(row=i, column=j, padx=5, pady=5, sticky="nsew")
+            
+                    def AnalyzeFace(frame):
+                        if self.frame_counter % n_frames == 0:
+                            # Reduce the frame size for faster processing (adjust as needed)
+                            small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
 
-                        for criminal_id, criminal_first_name, criminal_last_name, criminal_image, criminal_date_of_birth, criminal_notes, criminal_create_date in self.criminals:
-                            load_stored_image = face_recognition.load_image_file(criminal_image)
-                            stored_face_encoding = face_recognition.face_encodings(load_stored_image)[0]
-                            results = face_recognition.compare_faces([stored_face_encoding], webcam_face_encoding)
-
-                            if results[0]:
+                            for criminal_id, criminal_first_name, criminal_last_name, criminal_image, criminal_date_of_birth, criminal_notes, criminal_create_date, criminal_face_encode in self.criminals:
                                 if criminal_id not in self.showed_ids:
-                                    self.pop_match_dialog(criminal_id, criminal_first_name, criminal_last_name, criminal_image, criminal_date_of_birth, criminal_notes, criminal_create_date)
-                                break
+                                    face_locations = face_recognition.face_locations(small_frame)
+                                    face_encodings = face_recognition.face_encodings(small_frame, face_locations)
+                                    stored_face_encoding = pickle.loads(criminal_face_encode)
 
-                        self.window.after(10, self.capture_video())
+                                    # thread = threading.Thread(target=displayMatrix, args=(face_encodings,))
+                                    # thread.start()
+
+                                    for face_encoding in face_encodings:
+                                        results = face_recognition.compare_faces([stored_face_encoding], face_encoding)
+
+                                        if results[0]:
+                                            self.pop_match_dialog(criminal_id, criminal_first_name, criminal_last_name, criminal_image, criminal_date_of_birth, criminal_notes, criminal_create_date)
+                                        break
+                        self.frame_counter += 1
+                    
+                    cap = list(self.video_capture.values())[self.currentCamera]
+
+                    while self.capture_active:
+                        ret, frame = cap.read()
+
+                        if ret:
+                            img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                            frame_queue.put(img_rgb)
+
+                            img_rgb = frame_queue.get(block=False)
+                            img = Image.fromarray(img_rgb)
+                            img_tk = ImageTk.PhotoImage(image=img)
+                            
+                            with self.capture_lock:
+                                self.video_label.img_tk = img_tk
+                                self.video_label.configure(image=img_tk)
+
+                            thread = threading.Thread(target=AnalyzeFace, args=(frame,))
+                            thread.start()
+
+                        time.sleep(0.1)  # Adjust the sleep duration to control the frame rate
+
             except IndexError:
                 self.capture_video()
 
