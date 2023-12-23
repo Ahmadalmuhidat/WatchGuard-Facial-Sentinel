@@ -1,0 +1,20 @@
+[
+    {
+        "Database": {
+            "host": "localhost",
+            "user": "kali",
+            "password": "kali",
+            "database": "criminals"
+        },
+        "Settings": {
+            "fontFamily":"",
+            "fontSize": 10,
+            "fontColors": "white",
+            "them": "dark",
+            "currentCamera": 0,
+            "windowTitle": "security",
+            "usePassword": false,
+            "sendAlerts": false
+        }
+    }
+]
