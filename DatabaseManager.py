@@ -7,8 +7,9 @@ import tkinter
 import face_recognition
 import pickle
 import numpy
+import re
 
-from datetime import date, datetime
+from datetime import datetime, date
 
 class DatabaseManager:
     def __init__(self) -> None:
@@ -57,8 +58,17 @@ class DatabaseManager:
             elif not DateOfBirth:
                 tkinter.messagebox.showerror("Missing Entry", "please enter criminal date of birth")
                 return False
+            elif not re.match(r"^\d{4}-\d{2}-\d{2}$", DateOfBirth):
+                tkinter.messagebox.showerror("Wrong Date Format", "the allowed date format is YYYY-MM-DD")
+                return False
             elif not ImagePath:
                 tkinter.messagebox.showerror("Missing Entry", "please select criminal image")
+                return False
+            elif not os.path.exists(ImagePath):
+                tkinter.messagebox.showerror("Inavlid Path", "the selected path is not valid")
+                return False
+            elif not self.checkFaceInImage(ImagePath):
+                tkinter.messagebox.showerror("Face Not Found", "the uploaded image contains no face")
                 return False
 
             return True
@@ -71,11 +81,22 @@ class DatabaseManager:
 
     def getFaceEncoding(self, path):
         try:
-            if path:
-                # get te encode of the target face
-                load_stored_image = face_recognition.load_image_file(path)
-                stored_face_encoding = numpy.array(face_recognition.face_encodings(load_stored_image)[0])
-                return pickle.dumps(stored_face_encoding)
+            load_stored_image = face_recognition.load_image_file(path)
+            stored_face_encoding = numpy.array(face_recognition.face_encodings(load_stored_image)[0])
+            return pickle.dumps(stored_face_encoding)
+
+        except Exception as e:
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+            print(exc_type, fname, exc_tb.tb_lineno)
+            print(exc_obj)
+
+    def checkFaceInImage(self, path):
+        try:
+            FaceFound = face_recognition.face_locations(path)
+
+            if FaceFound:
+                return True
             else:
                 return False
 
@@ -87,17 +108,21 @@ class DatabaseManager:
 
     def insertTarget(self, **data):
         try:
-            DestinationPath = self.storeTargetImage(date["ImagePath"]) if hasattr(self, "image_path") else ""
+            DestinationPath = self.storeTargetImage(data["ImagePath"])
+            FaceEncoding = self.getFaceEncoding(data["ImagePath"])
+            DOB_formatted = datetime.strptime(data["DateOfBirth"], '%Y-%m-%d').strftime('%Y-%m-%d %H:%M:%S')
+
             data = (
                 data["ID"],
                 data["FirstName"],
                 data["LastName"],
-                data["DateOfBirth"],
                 DestinationPath,
+                DOB_formatted,
                 data["Notes"],
-                data["TodatDate"]
+                data["TodayDate"],
+                FaceEncoding
             )
-            
+
             query = "INSERT INTO criminals VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
             self.cursor.execute(query, data)
             self.db.commit()
@@ -109,8 +134,17 @@ class DatabaseManager:
             print(exc_obj)
             pass
 
-    def deleteTargetImage(self, path):
-        pass
+    def removeTargetImage(self, path):
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+
+        except Exception as e:
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+            print(exc_type, fname, exc_tb.tb_lineno)
+            print(exc_obj)
+            pass
 
     def storeTargetImage(self, path):
         try:
@@ -128,11 +162,11 @@ class DatabaseManager:
 
     def removeTarget(self, term):
         try:
-            query = "DELETE FROM criminals WHERE criminal_id=" + term
+            query = "DELETE FROM criminals WHERE criminal_id ='" + term + "'"
             self.cursor.execute(query)
             self.db.commit()
 
-            self.deleteTargetImage(term)
+            self.removeTargetImage(term)
 
             self.insertLog("target with ID of {} has been deleted".format(term))
 
@@ -189,14 +223,11 @@ class DatabaseManager:
 
     def searchTarget(self, term):
         try:
-            for label in self.CriminalsLabels:
-                label.destroy()
+            query = "SELECT * FROM criminals WHERE criminal_id = '" + term + "'"
+            self.cursor.execute(query)
+            self.Targets = self.cursor.fetchall()
 
-                query = "SELECT * FROM criminals WHERE criminal_id = '" + term + "'"
-                self.cursor.execute(query)
-                self.Targets = self.cursor.fetchall()
-
-                self.insertLog("searching for target with term of {}".format(term))
+            self.insertLog("searching for target with term of {}".format(term))
 
         except Exception as e:
             exc_type, exc_obj, exc_tb = sys.exc_info()
@@ -205,14 +236,11 @@ class DatabaseManager:
             print(exc_obj)
             pass
 
-    def searchLog(self, term):
+    def searchLogs(self, term):
         try:
-            for label in self.CriminalsLabels:
-                label.destroy()
-
-                query = "SELECT * FROM logs WHERE criminal_id LIKE " + term
-                self.cursor.execute(query)
-                self.Targets = self.cursor.fetchall()
+            query = "SELECT * FROM logs WHERE LogID LIKE '" + term + "' OR LogEvent LIKE '" + term + "'"
+            self.cursor.execute(query)
+            self.Targets = self.cursor.fetchall()
 
         except Exception as e:
             exc_type, exc_obj, exc_tb = sys.exc_info()
