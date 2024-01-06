@@ -4,6 +4,7 @@ import os
 import sys
 import datetime
 import FaceRecognitionModal
+import threading
 
 from PIL import Image
 
@@ -18,6 +19,7 @@ class UserInterface(FaceRecognitionModal.FaceRecognitionModal):
         self.pages = {}
         self.ShowedIDs = []
         self.CriminalsLabels = []
+        self.LogsLabels = []
         self.VideoCapture = {}
 
         self.Settings = {
@@ -31,49 +33,90 @@ class UserInterface(FaceRecognitionModal.FaceRecognitionModal):
             "sendAlerts": False
         }
 
-        self.listWorkingCameras()
-
-    def create_navbar(self, window):
+    def Navbar(self, window):
         navbar = customtkinter.CTkFrame(window)
         navbar.pack(fill=customtkinter.X)
 
-        customtkinter.CTkButton(navbar, text="Home", corner_radius=0, command=lambda: self.show_page("Home")).pack(side=customtkinter.LEFT)
-        customtkinter.CTkButton(navbar, text="Criminals", corner_radius=0, command=lambda: self.show_page("Criminals")).pack(side=customtkinter.LEFT)
-        customtkinter.CTkButton(navbar, text="Settings", corner_radius=0, command=lambda: self.show_page("Settings")).pack(side=customtkinter.LEFT)
-        customtkinter.CTkButton(navbar, text="Logs", corner_radius=0, command=lambda: self.show_page("Logs")).pack(side=customtkinter.LEFT)
+        HomeButton = customtkinter.CTkButton(navbar, text="Home")
+        HomeButton.configure(corner_radius=0, command=lambda: self.showPage("Home"))
+        HomeButton.pack(side=customtkinter.LEFT)
 
-    def show_page(self, name):
+        CriminalsButton = customtkinter.CTkButton(navbar, text="Criminals")
+        CriminalsButton.configure(corner_radius=0, command=lambda: self.showPage("Criminals"))
+        CriminalsButton.pack(side=customtkinter.LEFT)
+
+        SettingsButton = customtkinter.CTkButton(navbar, text="Settings")
+        SettingsButton.configure(corner_radius=0, command=lambda: self.showPage("Settings"))
+        SettingsButton.pack(side=customtkinter.LEFT)
+
+        LogsButton = customtkinter.CTkButton(navbar, text="Logs")
+        LogsButton.configure(corner_radius=0, command=lambda: self.showPage("Logs"))
+        LogsButton.pack(side=customtkinter.LEFT)
+
+    def showPage(self, name):
         if self.CurrentPage:
              self.CurrentPage.pack_forget()
 
         self.CurrentPage = self.pages[name]
         self.CurrentPage.pack(fill=customtkinter.BOTH, expand=True)
 
-    def create_page(self, window, name):
+    def createPage(self, window, name):
         page = customtkinter.CTkFrame(window)
         self.pages[name] = page
 
         if name == "Home":
-            self.create_home_page(page)
+            self.createHomePage(page)
         elif name == "Criminals":
-            self.create_criminals_page(page)
+            self.createCriminalsPage(page)
         elif name == "Settings":
-            self.create_settings_page(page)
+            self.createSettingsPage(page)
         elif name == "Logs":
-            self.create_logs_page(page)
+            self.createLogsPage(page)
 
-    def create_logs_page(self, page):
-        try:            
+    def createLogsPage(self, page):
+        try:
+            def updateLogs(term):
+                self.searchLogs(term)
+                displayLogsTable()
+            
+            def resetAllInputs():
+                self.getlogs()
+                displayLogsTable()
+            
+            def displayLogsTable():
+                for label in self.LogsLabels:
+                    label.destroy()
+
+                if len(self.Logs) > 0:
+                    for row, log in enumerate(self.Logs, start=1):
+                        log_id, log_date, log_time, log_event = log
+                        log_data = [log_id, log_date, log_time, log_event]
+
+                        for col, data in enumerate(log_data):
+                            data_label = customtkinter.CTkLabel(logs_table_frame, text=data, padx=10, pady=5)
+                            data_label.grid(row=row, column=col, sticky="nsew")
+                            self.LogsLabels.append(data_label)
+
+                for col in range(len(headers)):
+                    logs_table_frame.columnconfigure(col, weight=1)
+                
+                results_count.configure(text="Results: " + str(len(self.LogsLabels)))
+
             search_bar_frame = customtkinter.CTkFrame(page, bg_color="transparent")
             search_bar_frame.pack(padx=10, fill="x", expand=False)
 
-            search_button = customtkinter.CTkButton(search_bar_frame, text="Search")
+            search_button = customtkinter.CTkButton(search_bar_frame, text="Search", command=lambda: updateLogs(search_bar.get()))
             search_button.grid(row=0, column=0, sticky="nsew", pady=10, padx=5)
 
-            search_bar = customtkinter.CTkEntry(search_bar_frame, width=400, placeholder_text="Search for criminals...")
+            search_bar = customtkinter.CTkEntry(search_bar_frame, width=400, placeholder_text="Search for logs")
             search_bar.grid(row=0, column=1, sticky="nsew", pady=10)
 
-            logs_labels = []
+            reset_button = customtkinter.CTkButton(search_bar_frame, text="Reset", command=resetAllInputs)
+            reset_button.grid(row=0, column=2, sticky="nsew", pady=10, padx=5)
+
+            results_count = customtkinter.CTkLabel(search_bar_frame)
+            results_count.grid(row=0, column=3, padx=10, pady=5)
+
             logs_table_frame = customtkinter.CTkScrollableFrame(page)
             logs_table_frame.pack(padx=10, fill="both", expand=True)
 
@@ -82,18 +125,7 @@ class UserInterface(FaceRecognitionModal.FaceRecognitionModal):
                 header_label = customtkinter.CTkLabel(logs_table_frame, text=header, padx=10, pady=5)
                 header_label.grid(row=0, column=col, sticky="nsew")
 
-            if len(self.Logs) > 0:
-                for row, log in enumerate(self.Logs, start=1):
-                    log_id, log_date, log_time, log_event = log
-                    log_data = [log_id, log_date, log_time, log_event]
-
-                    for col, data in enumerate(log_data):
-                        data_label = customtkinter.CTkLabel(logs_table_frame, text=data, padx=10, pady=5)
-                        data_label.grid(row=row, column=col, sticky="nsew")
-                        logs_labels.append(data_label)
-
-                for col in range(len(headers)):
-                    logs_table_frame.columnconfigure(col, weight=1)
+            displayLogsTable()
 
         except Exception as e:
             exc_type, exc_obj, exc_tb = sys.exc_info()
@@ -101,7 +133,7 @@ class UserInterface(FaceRecognitionModal.FaceRecognitionModal):
             print(exc_type, fname, exc_tb.tb_lineno)
             print(exc_obj)
 
-    def create_home_page(self, page):
+    def createHomePage(self, page):
         try:
             page.rowconfigure(0, weight=1)
             page.rowconfigure(1, weight=3)
@@ -111,47 +143,91 @@ class UserInterface(FaceRecognitionModal.FaceRecognitionModal):
             page.columnconfigure(1, weight=3)
             page.columnconfigure(2, weight=1)
 
-            capture_button = customtkinter.CTkButton(page)
-            capture_button.grid(row=0, column=1)
-            capture_button.configure(text="Start/Stop Capture", command=self.startAllCaptures)
-
             content_frame = customtkinter.CTkFrame(page)
-            content_frame.grid(row=1, column=1)
-
-            content_frame.rowconfigure(0, weight=3)  # Make video_frame occupy more space
+            content_frame.grid(row=1, column=1, sticky="new")
+            content_frame.rowconfigure(0, weight=1)
             content_frame.rowconfigure(1, weight=1)
-
-            content_frame.columnconfigure(0, weight=3)  # Adjust width for information frames
+            content_frame.columnconfigure(0, weight=1)
             content_frame.columnconfigure(1, weight=1)
-
-            # Video frame
-            self.video_frame = customtkinter.CTkFrame(content_frame, border_width=1, corner_radius=0, border_color="white", width=700, height=700)
-            self.video_frame.grid(row=0, column=0, columnspan=3, sticky="nsew")
-            self.video_frame.grid_propagate(False)
+            content_frame.columnconfigure(2, weight=1)
+            content_frame.columnconfigure(3, weight=1)
 
             # Cameras count frame
-            cameras_count_frame = customtkinter.CTkFrame(content_frame, border_width=1, corner_radius=0, border_color="white", width=100, height=70)
+            capture_button = customtkinter.CTkButton(content_frame, font=customtkinter.CTkFont(size=20))
+            capture_button.grid(row=0, column=0, columnspan=2, sticky="nswe", pady=20)
+            capture_button.configure(text="Start Capture", command=self.startAllCaptures)
+
+            StopCaptureButton = customtkinter.CTkButton(content_frame, font=customtkinter.CTkFont(size=20))
+            StopCaptureButton.grid(row=0, column=2, columnspan=2, sticky="nswe", pady=20)
+            StopCaptureButton.configure(text="Stop Capture", command=self.stopAllCaptures, height=50, fg_color="red")
+
+            cameras_count_frame = customtkinter.CTkFrame(content_frame)
             cameras_count_frame.grid(row=1, column=0, sticky="nsew")
             cameras_count_frame.grid_propagate(False)
 
-            cameras_count = customtkinter.CTkLabel(cameras_count_frame, text="Cameras Count: 0", bg_color="transparent", font=customtkinter.CTkFont(size=15))
-            cameras_count.pack(padx=5, pady=15)
+            self.cameras_count = customtkinter.CTkLabel(cameras_count_frame)
+            self.cameras_count.pack(padx=5, pady=15)
+            self.cameras_count.configure(text="Cameras Count \n\n0", bg_color="transparent", font=customtkinter.CTkFont(size=20))
 
-            # Faces count frame
-            faces_count_frame = customtkinter.CTkFrame(content_frame, border_width=1, corner_radius=0, border_color="white", width=100, height=70)
+            faces_count_frame = customtkinter.CTkFrame(content_frame, border_width=1)
             faces_count_frame.grid(row=1, column=1, sticky="nsew")
             faces_count_frame.grid_propagate(False)
 
-            faces_count = customtkinter.CTkLabel(faces_count_frame, text="Faces Count: 0", bg_color="transparent", font=customtkinter.CTkFont(size=15))
-            faces_count.pack(padx=5, pady=15)
+            self.faces_count = customtkinter.CTkLabel(faces_count_frame)
+            self.faces_count.pack(padx=5, pady=15)
+            self.faces_count.configure(text="Faces Count \n\n0", bg_color="transparent", font=customtkinter.CTkFont(size=20))
 
-            # Users count frame
-            users_count_frame = customtkinter.CTkFrame(content_frame, border_width=1, corner_radius=0, border_color="white", width=100, height=70)
+            users_count_frame = customtkinter.CTkFrame(content_frame)
             users_count_frame.grid(row=1, column=2, sticky="nsew")
             users_count_frame.grid_propagate(False)
 
-            users_count = customtkinter.CTkLabel(users_count_frame, text="Users Count: 0", bg_color="transparent", font=customtkinter.CTkFont(size=15))
-            users_count.pack(padx=5, pady=15)
+            self.users_count = customtkinter.CTkLabel(users_count_frame)
+            self.users_count.pack(padx=5, pady=15)
+            self.users_count.configure(text="Users Count \n\n0", bg_color="transparent", font=customtkinter.CTkFont(size=20))
+
+            CPU_count_frame = customtkinter.CTkFrame(content_frame)
+            CPU_count_frame.grid(row=1, column=3, sticky="nsew")
+            CPU_count_frame.grid_propagate(False)
+
+            self.CPU_count = customtkinter.CTkLabel(CPU_count_frame)
+            self.CPU_count.pack(padx=5, pady=15)
+            self.CPU_count.configure(text="CPU Usage \n\n0", bg_color="transparent", font=customtkinter.CTkFont(size=20))
+
+            cams_table_frame = customtkinter.CTkFrame(content_frame)
+
+            if len(self.Cameras) > 3:
+                cams_table_frame = customtkinter.CTkScrollableFrame(content_frame)
+
+            cams_table_frame.grid(row=2, column=0, columnspan=4, sticky="nswe")
+
+            CamsLabels = []
+
+            headers = ["Cam", "header 2", "header 3", "Action"]
+            for col, header in enumerate(headers):
+                header_label = customtkinter.CTkLabel(cams_table_frame, text=header, padx=10, pady=5, font=customtkinter.CTkFont(size=20))
+                header_label.grid(row=0, column=col, sticky="nsew")
+
+            def showCamsTable():
+                for label in CamsLabels:
+                    label.destroy()
+
+                if len(self.Targets) > 0:
+                    for index, cam in enumerate(self.Cameras, start=1):
+                        cam_data = [index, "info 2", "info 3"]
+
+                        for col, data in enumerate(cam_data):
+                            data_label = customtkinter.CTkLabel(cams_table_frame, text=data, padx=10, pady=5)
+                            data_label.grid(row=index, column=col, sticky="nsew")
+                            CamsLabels.append(data_label)
+                            view_button = customtkinter.CTkButton(cams_table_frame, font=customtkinter.CTkFont(size=20))
+                            view_button.grid(row=index, column=col + 1, sticky="nsew")
+                            view_button.configure(text="View", command=lambda: self.showVideoFrame(index))
+
+                for col in range(len(headers)):
+                    cams_table_frame.columnconfigure(col, weight=1)
+
+            showCamsTable()
+            # threading.Thread(target=self.updateVideoFrame).start()
 
         except Exception as e:
             exc_type, exc_obj, exc_tb = sys.exc_info()
@@ -159,8 +235,78 @@ class UserInterface(FaceRecognitionModal.FaceRecognitionModal):
             print(exc_type, fname, exc_tb.tb_lineno)
             print(exc_obj)
 
-    def create_criminals_page(self, page):
+    def createCriminalsPage(self, page):
         try:
+            def searchCriminals(term):
+                self.searchTarget(term)
+                displayTargetsTable()
+
+            def deleteCriminal(term):
+                self.removeTarget(term)
+                self.getTargets()
+                displayTargetsTable()
+            
+            def displayTargetsTable():
+                for label in self.CriminalsLabels:
+                    label.destroy()
+
+                if len(self.Targets) > 0:
+                    for row, criminal in enumerate(self.Targets, start=1):
+                        criminal_id, criminal_first_name, criminal_last_name, criminal_image, criminal_date_of_birth, criminal_notes, criminal_create_date, criminal_face_encode = criminal
+                        criminal_data = [criminal_id, criminal_first_name, criminal_last_name, criminal_date_of_birth, criminal_notes, criminal_image, criminal_create_date]
+
+                        for col, data in enumerate(criminal_data):
+                            data_label = customtkinter.CTkLabel(criminals_table_frame, text=data, padx=10, pady=5)
+                            data_label.grid(row=row, column=col, sticky="nsew")
+                            self.CriminalsLabels.append(data_label)
+
+                for col in range(len(headers)):
+                    criminals_table_frame.columnconfigure(col, weight=1)
+                
+                results_count.configure(text="Results: " + str(len(self.CriminalsLabels)))
+
+            def resetAllInputs():
+                self.getTargets()
+                displayTargetsTable()
+
+            def uploadImage():
+                FilePath = tk.filedialog.askopenfilename()
+                if FilePath:
+                    image = Image.open(FilePath)
+                    image.thumbnail((150, 150))
+                    self.ImagePath = FilePath
+                    criminal_image_entry.delete(0, customtkinter.END)
+                    criminal_image_entry.insert(0, FilePath)
+
+            def saveCriminal():
+                ID = criminal_id_entry.get()
+                FirstName = criminal_first_name_entry.get()
+                LastName = criminal_last_name_entry.get()
+                DateOfBirth = criminal_dob_entry.get()
+                Notes = criminal_notes_entry.get()
+                TodayDate = datetime.date.today()
+
+                if self.validateTargetEntries(ID, FirstName, LastName, DateOfBirth, self.ImagePath):
+                    self.insertTarget(
+                        ID = ID,
+                        FirstName = FirstName,
+                        LastName = LastName,
+                        ImagePath =  self.ImagePath,
+                        DateOfBirth = DateOfBirth,
+                        Notes = Notes,
+                        TodayDate = TodayDate
+                    )
+
+                    # clear inputs
+                    criminal_id_entry.delete(0, customtkinter.END)
+                    criminal_first_name_entry.delete(0, customtkinter.END)
+                    criminal_last_name_entry.delete(0, customtkinter.END)
+                    criminal_dob_entry.delete(0, customtkinter.END)
+                    criminal_notes_entry.delete(0, customtkinter.END)
+                    criminal_image_entry.delete(0, customtkinter.END)
+
+                    resetAllInputs()
+
             add_criminal_frame = customtkinter.CTkFrame(page)
             add_criminal_frame.pack(padx=20, pady=20)
 
@@ -181,7 +327,7 @@ class UserInterface(FaceRecognitionModal.FaceRecognitionModal):
 
             criminal_dob_label = customtkinter.CTkLabel(add_criminal_frame, text="Date of Birth:")
             criminal_dob_label.grid(row=3, column=0, padx=10, pady=5)
-            criminal_dob_entry = customtkinter.CTkEntry(add_criminal_frame)
+            criminal_dob_entry = customtkinter.CTkEntry(add_criminal_frame, placeholder_text="YYYY-MM-DD")
             criminal_dob_entry.grid(row=3, column=1, padx=10, pady=5)
 
             criminal_notes_label = customtkinter.CTkLabel(add_criminal_frame, text="Notes:")
@@ -195,20 +341,26 @@ class UserInterface(FaceRecognitionModal.FaceRecognitionModal):
             search_bar_frame = customtkinter.CTkFrame(page, bg_color="transparent")
             search_bar_frame.pack(padx=10, fill="x", expand=False)
 
-            search_button = customtkinter.CTkButton(search_bar_frame, text="Search", command=lambda: searchCriminals(search_bar.get()))
+            search_button = customtkinter.CTkButton(search_bar_frame, text="Search")
             search_button.grid(row=0, column=0, sticky="nsew", pady=10, padx=5)
+            search_button.configure(command=lambda: searchCriminals(search_bar.get()))
 
             search_bar = customtkinter.CTkEntry(search_bar_frame, width=400, placeholder_text="Search for criminals...")
             search_bar.grid(row=0, column=1, sticky="nsew", pady=10)
 
-            delete_button = customtkinter.CTkButton(search_bar_frame, width=100, text="Delete", command=lambda: deleteCriminal(delete_bar.get()))
+            delete_button = customtkinter.CTkButton(search_bar_frame, width=100, text="Delete")
             delete_button.grid(row=0, column=2, sticky="nsew", pady=10, padx=5)
+            delete_button.configure(command=lambda: deleteCriminal(delete_bar.get()))
 
             delete_bar = customtkinter.CTkEntry(search_bar_frame, width=100, placeholder_text="ID")
             delete_bar.grid(row=0, column=3, sticky="nsew", pady=10)
 
-            reset_button = customtkinter.CTkButton(search_bar_frame, width=100, text="Reset", command=lambda: reset())
+            reset_button = customtkinter.CTkButton(search_bar_frame, width=100, text="Reset")
             reset_button.grid(row=0, column=4, sticky="nsew", pady=10, padx=5)
+            reset_button.configure(command=resetAllInputs)
+
+            results_count = customtkinter.CTkLabel(search_bar_frame)
+            results_count.grid(row=0, column=5, padx=10, pady=5)
 
             criminals_table_frame = customtkinter.CTkFrame(page)
             criminals_table_frame.pack(padx=10, fill="x", expand=False)
@@ -218,82 +370,15 @@ class UserInterface(FaceRecognitionModal.FaceRecognitionModal):
                 header_label = customtkinter.CTkLabel(criminals_table_frame, text=header, padx=10, pady=5)
                 header_label.grid(row=0, column=col, sticky="nsew")
 
-            def searchCriminals(term):
-                self.searchTarget(term)
+            displayTargetsTable()
 
-            def deleteCriminal(term):
-                self.removeTarget(term)
-                self.getTargets()
-                DisplayTargetsTable()
-            
-            def DisplayTargetsTable():
-                for label in self.CriminalsLabels:
-                    label.destroy()
-
-                if len(self.Targets) > 0:
-                    for row, criminal in enumerate(self.Targets, start=1):
-                        criminal_id, criminal_first_name, criminal_last_name, criminal_image, criminal_date_of_birth, criminal_notes, criminal_create_date, criminal_face_encode = criminal
-                        criminal_data = [criminal_id, criminal_first_name, criminal_last_name, criminal_date_of_birth, criminal_notes, criminal_image, criminal_create_date]
-
-                        for col, data in enumerate(criminal_data):
-                            data_label = customtkinter.CTkLabel(criminals_table_frame, text=data, padx=10, pady=5)
-                            data_label.grid(row=row, column=col, sticky="nsew")
-                            self.CriminalsLabels.append(data_label)
-
-                    for col in range(len(headers)):
-                        criminals_table_frame.columnconfigure(col, weight=1)
-
-            def reset():
-                self.getTargets()
-                DisplayTargetsTable()
-
-            def upload_image():
-                FilePath = tk.filedialog.askopenfilename()
-                if FilePath:
-                    image = Image.open(FilePath)
-                    image.thumbnail((150, 150))
-                    self.ImagePath = FilePath
-                    criminal_image_entry.delete(0, customtkinter.END)
-                    criminal_image_entry.insert(0, FilePath)
-
-            def save_criminal():
-                # prepare the entries
-                ID = criminal_id_entry.get()
-                FirstName = criminal_first_name_entry.get()
-                LastName = criminal_last_name_entry.get()
-                DateOfBirth = criminal_dob_entry.get()
-                Notes = criminal_notes_entry.get()
-                TodayDate = datetime.date.today()
-
-                if self.validateTargetEntries(ID, FirstName, LastName, DateOfBirth, self.ImagePath):
-                    # store the entries in the DB
-                    self.insertTarget(
-                        ID = ID,
-                        FirstName = FirstName,
-                        LastName = LastName,
-                        ImagePath =  self.ImagePath,
-                        DateOfBirth = DateOfBirth,
-                        Notes = Notes,
-                        TodayDate = TodayDate
-                    )
-
-                    # clear inputs
-                    criminal_id_entry.delete(0, customtkinter.END)
-                    criminal_first_name_entry.delete(0, customtkinter.END)
-                    criminal_last_name_entry.delete(0, customtkinter.END)
-                    criminal_dob_entry.delete(0, customtkinter.END)
-                    criminal_notes_entry.delete(0, customtkinter.END)
-                    criminal_image_entry.delete(0, customtkinter.END)
-
-                    DisplayTargetsTable()
-
-            DisplayTargetsTable()
-
-            upload_button = customtkinter.CTkButton(add_criminal_frame, text="Upload Image", width=30, height=30, command=upload_image)
+            upload_button = customtkinter.CTkButton(add_criminal_frame)
             upload_button.grid(row=5, column=0, pady=5)
+            upload_button.configure(text="Upload Image", width=30, height=30, command=uploadImage)
 
-            save_button = customtkinter.CTkButton(add_criminal_frame, text="Save Criminal", command=save_criminal)
+            save_button = customtkinter.CTkButton(add_criminal_frame)
             save_button.grid(row=7, columnspan=2, pady=5, sticky="nsew")
+            save_button.configure(text="Save Criminal", command=saveCriminal)
 
         except Exception as e:
             exc_type, exc_obj, exc_tb = sys.exc_info()
@@ -301,7 +386,7 @@ class UserInterface(FaceRecognitionModal.FaceRecognitionModal):
             print(exc_type, fname, exc_tb.tb_lineno)
             print(exc_obj)
 
-    def create_settings_page(self, page):
+    def createSettingsPage(self, page):
         try:
             page.rowconfigure(0, weight=1)
             page.rowconfigure(1, weight=1)
@@ -381,13 +466,17 @@ class UserInterface(FaceRecognitionModal.FaceRecognitionModal):
             self.window.resizable(width=0, height=0)
             self.window.title("Criminals Face Detector")
 
-            self.create_navbar(self.window)
-            self.create_page(self.window, "Home")
-            self.create_page(self.window, "Criminals")
-            self.create_page(self.window, "Settings")
-            self.create_page(self.window, "Logs")
+            self.Navbar(self.window)
+            self.createPage(self.window, "Home")
+            self.createPage(self.window, "Criminals")
+            self.createPage(self.window, "Settings")
+            self.createPage(self.window, "Logs")
 
-            self.show_page("Home")
+            self.showPage("Home")
+
+            threading.Thread(target=self.updateCPUMetrics).start()
+            threading.Thread(target=self.updateCamerasCount).start()
+            threading.Thread(target=self.updateFacesCount).start()
 
             self.window.mainloop()
 
