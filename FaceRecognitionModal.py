@@ -4,9 +4,10 @@ import threading
 import threading
 import pickle
 import time
-import numpy
 import sys
 import os
+import psutil
+import time
 import customtkinter
 import DatabaseManager
 
@@ -38,25 +39,7 @@ class FaceRecognitionModal(DatabaseManager.DatabaseManager):
             self.connect(host="localhost", user="kali", password="kali", database="criminals")
             self.getTargets()
             self.getlogs()
-
-        except Exception as e:
-            exc_type, exc_obj, exc_tb = sys.exc_info()
-            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-            print(exc_type, fname, exc_tb.tb_lineno)
-            print(exc_obj)
-            pass
-
-    def transMatrix(self, matrix):
-        try:
-            res = ""
-
-            for array in matrix[0:]:
-                res += "["
-                for number in array:
-                    res += str(number)
-                res += "]"
-
-            return res
+            self.listWorkingCameras()
 
         except Exception as e:
             exc_type, exc_obj, exc_tb = sys.exc_info()
@@ -99,6 +82,33 @@ class FaceRecognitionModal(DatabaseManager.DatabaseManager):
             print(exc_obj)
             pass
 
+    def captureVideo(self, cap):
+        try:
+            if self.ActivateCapturing:
+
+                cap = list(self.Streams.values())[self.CurrentCam]
+
+                while self.ActivateCapturing:
+                    ret, frame = cap.read()
+
+                    if ret:
+                        img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        self.FramesQueue.put(img_rgb)
+
+                        thread = threading.Thread(target=self.AnalyzeFace, args=(frame,))
+                        thread.start()
+
+                    time.sleep(0.1)
+
+        except IndexError:
+            self.captureVideo()
+        except Exception as e:
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+            print(exc_type, fname, exc_tb.tb_lineno)
+            print(exc_obj)
+            pass
+
     def startCapturing(self, CameraIndex, StopEvent):
         try:
             cap = cv2.VideoCapture(CameraIndex)
@@ -113,6 +123,38 @@ class FaceRecognitionModal(DatabaseManager.DatabaseManager):
             print(exc_type, fname, exc_tb.tb_lineno)
             print(exc_obj)
             pass
+
+    def showVideoFrame(self, index):
+        try:
+            stop = threading.Event()
+
+            def startStreaming():
+                cap = cv2.VideoCapture(index - 1)
+                WindowTitle = f"Camera Index {index}"
+
+                while True:
+                    ret, frame = cap.read()
+                    
+                    if ret:
+                        cv2.imshow(WindowTitle, frame) 
+
+                        if cv2.waitKey(1) & 0xFF == ord('q') or cv2.getWindowProperty(WindowTitle, cv2.WND_PROP_VISIBLE) < 1: 
+                            stop.set()
+                            break
+
+                    if stop.is_set():
+                        break
+
+                cap.release() 
+                cv2.destroyAllWindows() 
+            
+            threading.Thread(target=startStreaming).start()
+
+        except Exception as e:
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+            print(exc_type, fname, exc_tb.tb_lineno)
+            print(exc_obj)
 
     def startAllCaptures(self):
         try:
@@ -132,8 +174,6 @@ class FaceRecognitionModal(DatabaseManager.DatabaseManager):
                         CaptureThread.start()
                 else:
                     self.insertLog("failed to find active cameras")
-            else:
-                self.stopAllCaptures()
 
         except Exception as e:
             exc_type, exc_obj, exc_tb = sys.exc_info()
@@ -177,6 +217,8 @@ class FaceRecognitionModal(DatabaseManager.DatabaseManager):
                 small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
                 face = self.getTheFace(small_frame)
 
+                # fix: make a thread for every face
+
                 if (face):
                     self.FacesCount += 1
 
@@ -202,8 +244,7 @@ class FaceRecognitionModal(DatabaseManager.DatabaseManager):
                                         'criminal_create_date': target[6]
                                     }
 
-                                    self.pop_match_dialog(data)
-
+                                    self.matchAlertWindow(data)
                                     self.insertLog("target with ID of {} has been detected".format(TargetID))
                 else:
                     print("No face found!")
@@ -217,39 +258,7 @@ class FaceRecognitionModal(DatabaseManager.DatabaseManager):
             print(exc_obj)
             pass
 
-    def displayMatrix(self, face_encodings):
-        try:
-            self.Matrix = numpy.array(face_encodings)
-
-        except Exception as e:
-            exc_type, exc_obj, exc_tb = sys.exc_info()
-            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-            print(exc_type, fname, exc_tb.tb_lineno)
-            print(exc_obj)
-            pass
-
-    def captureVideo(self, cap):
-        try:
-            if self.ActivateCapturing:
-                
-                cap = list(self.Streams.values())[self.CurrentCam]
-
-                while self.ActivateCapturing:
-                    ret, frame = cap.read()
-
-                    if ret:
-                        img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                        self.FramesQueue.put(img_rgb)
-
-                        thread = threading.Thread(target=self.AnalyzeFace, args=(frame,))
-                        thread.start()
-
-                    time.sleep(0.1)
-
-        except IndexError:
-            self.captureVideo()
-
-    def pop_match_dialog(self, criminal_data):
+    def matchAlertWindow(self, criminal_data):
         self.ShowedIDs.append(criminal_data['criminal_id'])
 
         dialog = customtkinter.CTkToplevel()
@@ -257,9 +266,24 @@ class FaceRecognitionModal(DatabaseManager.DatabaseManager):
         dialog.geometry("600x300")
         dialog.resizable(width=0, height=0)
 
-        self.setup_dialog(dialog, criminal_data)
+        self.setupMatchAlertWindow(dialog, criminal_data)
 
-    def setup_dialog(self, dialog, criminal_data):
+    def updateCamerasCount(self):
+        self.listWorkingCameras()
+        self.cameras_count.configure(text="Cameras Count \n\n{}".format(len(self.Cameras)))
+        time.sleep(5)
+    
+    def updateCPUMetrics(self):
+        while True:
+            metrics = psutil.cpu_percent(interval=1)
+            self.CPU_count.configure(text="CPU Usage \n\n{}%".format(metrics))
+    
+    def updateFacesCount(self):
+        if self.ActivateCapturing:
+            self.faces_count.configure(text="Faces Count \n\n{}".format(self.FacesCount))
+            time.sleep(5)
+
+    def setupMatchAlertWindow(self, dialog, criminal_data):
         content_frame = customtkinter.CTkFrame(dialog)
         content_frame.pack(expand=True, fill="both")
 
@@ -295,10 +319,3 @@ class FaceRecognitionModal(DatabaseManager.DatabaseManager):
 
         dialog.lift()
         dialog.wait_window()
-
-
-# test = FaceRecognitionModal()
-# test.Database(host="localhost", user="kali", password="kali", database="criminals")
-# test.getCriminals()
-# test.listWorkingCameras()
-# test.startAllCaptures()
